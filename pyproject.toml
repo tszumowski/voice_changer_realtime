@@ -1,0 +1,31 @@
+[project]
+name = "voice-changer"
+version = "0.1.0"
+description = "Near-real-time voice changer using ElevenLabs Speech-to-Speech API and BlackHole virtual audio driver"
+readme = "README.md"
+authors = [
+    { name = "Tom Szumowski", email = "tszumowski@urbn.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "elevenlabs>=1.0",
+    "pyaudio>=0.2.14",
+    "webrtcvad-wheels>=2.0.11",
+    "numpy>=1.26",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+voice-changer = "voice_changer.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
