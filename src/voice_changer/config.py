@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -18,11 +18,14 @@ class Settings:
     output_device: int | None = None
     sample_rate: int = 16000
     chunk_duration_ms: int = 30
-    segment_duration_s: float = 1.5
+    segment_duration_s: float = 1.0
     output_format: str = "pcm_16000"
     remove_background_noise: bool = True
     vad_aggressiveness: int = 2
     vad_silence_duration_s: float = 0.25
+    mode: str = "normal"
+    resemble_api_key: str | None = None
+    resemble_voice_uuid: str | None = None
     verbose: bool = False
 
     @property
@@ -60,5 +63,13 @@ def load_settings(**overrides) -> Settings:
         )
 
     voice_id = overrides.pop("voice_id", None) or os.getenv("VOICE_ID")
+    resemble_api_key = overrides.pop("resemble_api_key", None) or os.getenv("RESEMBLE_API_KEY")
+    resemble_voice_uuid = overrides.pop("resemble_voice_uuid", None) or os.getenv("RESEMBLE_VOICE_UUID")
 
-    return Settings(api_key=api_key, voice_id=voice_id, **overrides)
+    return Settings(
+        api_key=api_key,
+        voice_id=voice_id,
+        resemble_api_key=resemble_api_key,
+        resemble_voice_uuid=resemble_voice_uuid,
+        **overrides,
+    )

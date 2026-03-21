@@ -15,8 +15,8 @@ def test_settings_frame_size():
 
 
 def test_settings_max_segment_frames():
-    s = Settings(api_key="test", segment_duration_s=1.5, chunk_duration_ms=30)
-    assert s.max_segment_frames == 50  # 1500ms / 30ms
+    s = Settings(api_key="test", segment_duration_s=1.0, chunk_duration_ms=30)
+    assert s.max_segment_frames == 33  # 1000ms / 30ms
 
 
 def test_settings_silence_frames():

@@ -88,9 +88,6 @@ def transform_segment(
     Yields:
         Chunks of transformed audio bytes.
     """
-    # Wrap PCM in WAV header so the API knows the format
-    wav_data = _wrap_pcm_as_wav(pcm_audio, sample_rate=sample_rate)
-
     start = time.monotonic()
     first_chunk = True
 
@@ -98,10 +95,13 @@ def transform_segment(
         method = client.speech_to_speech.stream if use_stream else client.speech_to_speech.convert
         return method(
             voice_id=voice_id,
-            audio=("segment.wav", wav_data, "audio/wav"),
+            audio=("segment.pcm", pcm_audio, "audio/raw"),
             model_id=model_id,
             output_format=output_format,
             remove_background_noise=remove_background_noise,
+            file_format="pcm_s16le_16",
+            optimize_streaming_latency=4,
+            voice_settings='{"style":0,"use_speaker_boost":false}',
         )
 
     try:

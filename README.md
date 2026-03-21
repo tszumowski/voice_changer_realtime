@@ -51,7 +51,24 @@ Speak into your mic, hear your transformed voice through speakers, and route it 
 | Audio playback buffer | ~30ms |
 | **Total (speech end to hearing output)** | **~1-2s** |
 
-> Note: ElevenLabs STS v2 models have inherent processing latency of 1-2s. This is an API-side constraint. The app minimizes all other sources of latency. Reducing `--segment-duration` to 1.0s can help, at the cost of voice quality.
+## Voice Changing Modes
+
+The app supports three modes, selectable via `--mode`:
+
+| Mode | Flag | Latency | Prosody | Provider | Notes |
+|------|------|---------|---------|----------|-------|
+| **Normal** | `--mode normal` | ~1s | Preserved | ElevenLabs STS | Default. Your delivery style is preserved. |
+| **Fast** | `--mode fast` | ~300ms | AI-generated | ElevenLabs STT→TTS | Words are correct but delivery is AI-generated. Uses WebSocket streaming. |
+| **Resemble** | `--mode resemble` | TBD | Preserved | Resemble.ai STS | Alternative provider. Requires separate API key + credits. |
+
+### Normal Mode (ElevenLabs STS)
+Speech-to-Speech: your audio is converted to the target voice while preserving your intonation, pacing, and emotion. Optimized with raw PCM input, latency tuning, and minimal voice processing.
+
+### Fast Mode (ElevenLabs STT → TTS)
+Your speech is transcribed to text via Scribe v2 Realtime WebSocket (~150ms), then re-synthesized in the target voice via Flash v2.5 TTS WebSocket (~150ms). Much lower latency but the output has AI-generated delivery — the words are right but the pacing/emotion is synthetic.
+
+### Resemble Mode (Resemble.ai STS)
+Alternative Speech-to-Speech provider. Preserves prosody like normal mode. Requires a Resemble.ai account, API key, and credits. Set `RESEMBLE_API_KEY` in `.env`.
 
 ## Prerequisites
 
@@ -216,7 +233,8 @@ live options:
   --input-device N         Input device index (default: system mic)
   --output-device N        Output device index (default: system output)
   --model MODEL            STS model (default: eleven_english_sts_v2)
-  --segment-duration SECS  Max speech segment length (default: 1.5)
+  --mode MODE              normal, fast, or resemble (default: normal)
+  --segment-duration SECS  Max speech segment length (default: 1.0)
   --vad-aggressiveness N   1-3, higher = more aggressive (default: 2)
   --ptt [KEY]              Push-to-talk: hold KEY to record (default: right_cmd)
 
@@ -225,6 +243,7 @@ test options:
   -o, --output-file PATH   Output WAV file (default: output.wav)
   --voice-id ID            Target voice ID
   --model MODEL            STS model
+  --mode MODE              normal, fast, or resemble
 ```
 
 ## Configuration
@@ -234,7 +253,9 @@ test options:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `ELEVENLABS_API_KEY` | Yes | Your ElevenLabs API key |
-| `VOICE_ID` | No | Default voice ID to use |
+| `VOICE_ID` | No | Default ElevenLabs voice ID |
+| `RESEMBLE_API_KEY` | For `--mode resemble` | Resemble.ai API key |
+| `RESEMBLE_VOICE_UUID` | No | Default Resemble.ai voice UUID |
 
 ### Audio Format
 
@@ -272,7 +293,9 @@ voice_changer/
 │   ├── transformer.py          # ElevenLabs STS API wrapper
 │   ├── playback.py             # Audio output thread
 │   ├── ptt.py                  # Push-to-talk key listener
-│   └── pipeline.py             # Orchestrator (live + test modes)
+│   ├── pipeline.py             # Orchestrator (live + test, normal mode)
+│   ├── fast_pipeline.py        # STT→TTS WebSocket pipeline (fast mode)
+│   └── resemble_pipeline.py    # Resemble.ai STS pipeline
 ├── tests/
 │   ├── test_config.py          # Config loading tests
 │   ├── test_vad.py             # VAD state machine tests

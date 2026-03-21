@@ -579,6 +579,7 @@ dependencies = [
     { name = "pyaudio" },
     { name = "pynput" },
     { name = "python-dotenv" },
+    { name = "requests" },
     { name = "webrtcvad-wheels" },
 ]
 
@@ -594,6 +595,7 @@ requires-dist = [
     { name = "pyaudio", specifier = ">=0.2.14" },
     { name = "pynput", specifier = ">=1.7" },
     { name = "python-dotenv", specifier = ">=1.0" },
+    { name = "requests", specifier = ">=2.31" },
     { name = "webrtcvad-wheels", specifier = ">=2.0.11" },
 ]
 
