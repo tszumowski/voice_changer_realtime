@@ -26,14 +26,22 @@ logger = logging.getLogger(__name__)
 class LivePipeline:
     """Real-time voice changing pipeline: mic -> VAD -> ElevenLabs -> speaker."""
 
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, ptt=None):
+        """
+        Args:
+            settings: App settings.
+            ptt: Optional PushToTalk instance. If provided, capture is only
+                 active while the PTT key is held down.
+        """
         self.settings = settings
+        self.ptt = ptt
         self.client = create_client(settings.api_key)
         self.voice_id = settings.voice_id or get_default_voice_id(self.client)
 
         self._capture_queue: queue.Queue[bytes] = queue.Queue(maxsize=200)
         self._output_queue: queue.Queue[bytes | None] = queue.Queue(maxsize=200)
         self._stop_event = threading.Event()
+        self._playing_event = threading.Event()
 
         self._capture = MicCapture(
             frame_queue=self._capture_queue,
@@ -45,6 +53,7 @@ class LivePipeline:
             output_queue=self._output_queue,
             sample_rate=settings.sample_rate,
             device_index=settings.output_device,
+            playing_event=self._playing_event,
         )
         self._vad = VoiceActivityDetector(
             sample_rate=settings.sample_rate,
@@ -58,11 +67,41 @@ class LivePipeline:
         self._errors = 0
         self._start_time = 0.0
 
+    def _prewarm_connection(self):
+        """Send a tiny dummy segment to warm up the API connection + TLS."""
+        logger.info("Pre-warming API connection...")
+        # 0.5s of silence at 16kHz mono 16-bit
+        dummy_pcm = b"\x00\x00" * (self.settings.sample_rate // 2)
+        try:
+            for _ in transform_segment(
+                client=self.client,
+                pcm_audio=dummy_pcm,
+                voice_id=self.voice_id,
+                model_id=self.settings.model_id,
+                output_format=self.settings.output_format,
+                remove_background_noise=False,
+                sample_rate=self.settings.sample_rate,
+            ):
+                pass  # Discard output, we just want the connection warm
+            logger.info("API connection pre-warmed")
+        except Exception as e:
+            logger.warning("Pre-warm failed (non-fatal): %s", e)
+
     def start(self):
         """Start the live pipeline. Blocks until Ctrl+C."""
         logger.info("Starting live pipeline (voice_id=%s)", self.voice_id)
         print(f"\nVoice changer active! Voice: {self.voice_id}")
-        print("Speak into your microphone. Press Ctrl+C to stop.\n")
+
+        self._prewarm_connection()
+
+        if self.ptt:
+            from voice_changer.ptt import _key_display_name
+            key_name = _key_display_name(self.ptt.key)
+            print(f"Push-to-talk mode: hold [{key_name}] to record, release to send.")
+            self.ptt.start()
+        else:
+            print("Speak into your microphone. (Half-duplex: mic muted during playback)")
+        print("Press Ctrl+C to stop.\n")
 
         self._start_time = time.monotonic()
         self._capture.start()
@@ -77,16 +116,68 @@ class LivePipeline:
             self.stop()
 
     def _process_loop(self, executor: ThreadPoolExecutor):
-        """Main loop: read frames from capture, run VAD, transform segments."""
+        """Main loop: read frames from capture, run VAD, transform segments.
+
+        Supports two modes:
+        - PTT mode: only record while the push-to-talk key is held.
+          On release, flush the VAD buffer to send the segment immediately.
+        - Auto mode (no PTT): half-duplex feedback suppression — mic is
+          muted while audio is playing back.
+        """
+        was_playing = False
+        ptt_was_active = False
+
         while not self._stop_event.is_set():
             try:
                 frame = self._capture_queue.get(timeout=0.1)
             except queue.Empty:
+                # Check if PTT key was just released (no frames but need to flush)
+                if self.ptt and ptt_was_active and not self.ptt.is_active:
+                    segment = self._vad.flush()
+                    if segment is not None:
+                        logger.debug("PTT released — flushing segment (%d bytes)", len(segment))
+                        executor.submit(self._transform_and_play, segment)
+                    ptt_was_active = False
+                continue
+
+            # --- PTT mode ---
+            if self.ptt:
+                if self.ptt.is_active:
+                    ptt_was_active = True
+                    segment = self._vad.process_frame(frame)
+                    if segment is not None:
+                        executor.submit(self._transform_and_play, segment)
+                else:
+                    if ptt_was_active:
+                        # Key just released — flush remaining audio
+                        segment = self._vad.flush()
+                        if segment is not None:
+                            logger.debug("PTT released — flushing segment (%d bytes)", len(segment))
+                            executor.submit(self._transform_and_play, segment)
+                        ptt_was_active = False
+                    # Discard frames when PTT not held
+                continue
+
+            # --- Auto mode (no PTT): feedback suppression ---
+            if self._playing_event.is_set():
+                if not was_playing:
+                    logger.debug("Playback active — muting capture")
+                    was_playing = True
+                continue
+
+            if was_playing:
+                logger.debug("Playback ended — resuming capture, resetting VAD")
+                self._vad.reset()
+                while not self._capture_queue.empty():
+                    try:
+                        self._capture_queue.get_nowait()
+                    except queue.Empty:
+                        break
+                was_playing = False
                 continue
 
             segment = self._vad.process_frame(frame)
             if segment is not None:
-                # Submit transform to thread pool (non-blocking)
                 executor.submit(self._transform_and_play, segment)
 
     def _transform_and_play(self, segment: bytes):
@@ -117,6 +208,8 @@ class LivePipeline:
         if remaining:
             logger.debug("Flushing final VAD segment")
 
+        if self.ptt:
+            self.ptt.stop()
         self._capture.stop()
         self._output_queue.put(None)  # Poison pill for playback
         self._playback.stop()

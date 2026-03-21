@@ -20,15 +20,21 @@ class AudioPlayback:
         sample_rate: int = 16000,
         device_index: int | None = None,
         chunk_size: int = 1024,
+        playing_event: threading.Event | None = None,
     ):
         self.output_queue = output_queue
         self.sample_rate = sample_rate
         self.device_index = device_index
         self.chunk_size = chunk_size
+        self._playing = playing_event or threading.Event()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._pa: pyaudio.PyAudio | None = None
         self._stream: pyaudio.Stream | None = None
+
+    @property
+    def is_playing(self) -> bool:
+        return self._playing.is_set()
 
     def start(self):
         """Start the playback thread."""
@@ -60,10 +66,16 @@ class AudioPlayback:
                 chunk = self.output_queue.get(timeout=0.1)
                 if chunk is None:  # Poison pill
                     break
+                self._playing.set()
                 self._stream.write(chunk)
+                # If no more chunks are immediately available, we're done playing
+                if self.output_queue.empty():
+                    self._playing.clear()
             except queue.Empty:
+                self._playing.clear()
                 continue
             except Exception as e:
+                self._playing.clear()
                 logger.error("Playback error: %s", e)
                 break
 

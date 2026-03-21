@@ -43,6 +43,12 @@ def main():
         "--vad-aggressiveness", type=int, default=2, choices=[1, 2, 3],
         help="VAD aggressiveness (1=least, 3=most)"
     )
+    p_live.add_argument(
+        "--ptt", nargs="?", const="right_cmd", default=None, metavar="KEY",
+        help="Enable push-to-talk mode. Hold KEY to record, release to send. "
+             "Default key: right_cmd. Options: space, right_cmd, right_ctrl, f1-f20, "
+             "or any single character."
+    )
 
     args = parser.parse_args()
 
@@ -101,5 +107,12 @@ def main():
             segment_duration_s=args.segment_duration,
             vad_aggressiveness=args.vad_aggressiveness,
         )
-        pipeline = LivePipeline(settings)
+
+        ptt = None
+        if args.ptt is not None:
+            from voice_changer.ptt import PushToTalk, parse_ptt_key
+            key = parse_ptt_key(args.ptt)
+            ptt = PushToTalk(key=key)
+
+        pipeline = LivePipeline(settings, ptt=ptt)
         pipeline.start()
