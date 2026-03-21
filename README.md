@@ -117,30 +117,52 @@ Expected output should show BlackHole 2ch and Multi-Output Device with their ind
 
 ## Usage
 
+### Quick Test (Local, No Calls)
+
+Verify the voice changer works on your Mac before using it with calls or meetings.
+
+1. Start the voice changer with push-to-talk:
+   ```bash
+   uv run voice-changer live --output-device 6 --ptt
+   ```
+2. Open **System Settings > Sound > Input** and set it to **"BlackHole 2ch"**
+3. Open **Voice Memos** (or any recording app)
+4. Hold the PTT key (right Cmd by default), speak, then release
+5. The recording should contain only the transformed voice
+
+> **Tip**: Use `list-devices` to find your device indices. The Multi-Output Device index may differ on your system.
+
 ### Live Mode (Real-Time Voice Changing)
 
 ```bash
-# Basic — uses default voice and devices
-uv run voice-changer live
+# Auto mode with feedback suppression (mic muted during playback)
+uv run voice-changer live --output-device 6
 
-# Specify a voice and output device
-uv run voice-changer live --voice-id CwhRBWXzGAHq8TQ4Fs17 --output-device 5
+# Push-to-talk mode (hold right Cmd to record, release to send)
+uv run voice-changer live --output-device 6 --ptt
+
+# PTT with a different key
+uv run voice-changer live --output-device 6 --ptt space
+uv run voice-changer live --output-device 6 --ptt f5
+
+# Specify a voice and input device explicitly
+uv run voice-changer live --voice-id CwhRBWXzGAHq8TQ4Fs17 --input-device 3 --output-device 6
 
 # With debug logging
-uv run voice-changer --verbose live
+uv run voice-changer --verbose live --output-device 6 --ptt
 
 # Shorter segments for lower latency (at cost of quality)
-uv run voice-changer live --segment-duration 1.0
+uv run voice-changer live --output-device 6 --segment-duration 1.0
 
 # More aggressive VAD (better at ignoring background noise)
-uv run voice-changer live --vad-aggressiveness 3
+uv run voice-changer live --output-device 6 --vad-aggressiveness 3
 ```
 
 Press `Ctrl+C` to stop. Session stats (segments processed, errors) are printed on exit.
 
 ### Test Mode (File-Based, No Mic Needed)
 
-Perfect for verifying the pipeline works without needing audio devices:
+Perfect for verifying the API pipeline works without needing audio devices:
 
 ```bash
 # Transform a WAV file
@@ -150,11 +172,33 @@ uv run voice-changer test -i samples/sample.wav -o output.wav
 uv run voice-changer test -i samples/sample.wav --voice-id pNInz6obpgDQGcFmaJgB
 ```
 
+### Using with Phone Calls (FaceTime / Phone App)
+
+You can use the voice changer for phone calls made through the macOS **Phone** or **FaceTime** apps (calls relayed from your synced iPhone).
+
+**Setup:**
+
+1. Start the voice changer:
+   ```bash
+   uv run voice-changer live --input-device 3 --output-device 6 --ptt
+   ```
+   - `--input-device 3` = MacBook Pro Microphone (use `list-devices` to confirm index)
+   - `--output-device 6` = Multi-Output Device
+   - `--ptt` = push-to-talk (recommended to avoid feedback)
+
+2. In the **Phone** or **FaceTime** app, go to the menu bar:
+   - **Video > Microphone** — select **"BlackHole 2ch"**
+   - **Video > Output** — select **"Multi-Output Device"** (so you hear the caller)
+
+3. Make your call. Hold the PTT key while speaking — the caller hears the transformed voice.
+
+> **Note**: The audio device settings are in the **Video** menu of Phone/FaceTime, not in Settings/Preferences. FaceTime Audio calls (to other Apple users) also work with this setup.
+
 ### Using with Discord / Zoom / Google Meet
 
-1. Start the voice changer: `uv run voice-changer live --output-device <multi-output-index>`
+1. Start the voice changer: `uv run voice-changer live --output-device 6 --ptt`
 2. In your target app's audio settings, select **"BlackHole 2ch"** as the **microphone/input device**
-3. Speak normally — the app receives your transformed voice
+3. Hold the PTT key and speak — the app receives your transformed voice
 
 ### CLI Reference
 
@@ -174,6 +218,7 @@ live options:
   --model MODEL            STS model (default: eleven_english_sts_v2)
   --segment-duration SECS  Max speech segment length (default: 1.5)
   --vad-aggressiveness N   1-3, higher = more aggressive (default: 2)
+  --ptt [KEY]              Push-to-talk: hold KEY to record (default: right_cmd)
 
 test options:
   -i, --input-file PATH    Input WAV file (required)
@@ -226,6 +271,7 @@ voice_changer/
 │   ├── vad.py                  # Voice Activity Detection
 │   ├── transformer.py          # ElevenLabs STS API wrapper
 │   ├── playback.py             # Audio output thread
+│   ├── ptt.py                  # Push-to-talk key listener
 │   └── pipeline.py             # Orchestrator (live + test modes)
 ├── tests/
 │   ├── test_config.py          # Config loading tests
@@ -252,7 +298,9 @@ voice_changer/
 - Try using headphones to reduce feedback
 
 ### Feedback loop
-- **Use headphones!** If the mic picks up the speaker output, you'll get a feedback loop
+- **Use push-to-talk mode** (`--ptt`) — this is the most reliable way to prevent feedback
+- Without PTT, the app uses half-duplex mode (mic muted during playback) which helps but isn't perfect
+- **Use headphones** if you want auto mode without feedback
 - The `remove_background_noise` option (on by default) helps but won't eliminate it
 
 ### API errors (401/403)
