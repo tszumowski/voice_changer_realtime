@@ -17,22 +17,22 @@ def test_upload_temp_wav():
     fake_wav = b"RIFF" + b"\x00" * 100
 
     mock_resp = MagicMock()
-    mock_resp.text = "https://0x0.st/abc123.wav\n"
+    mock_resp.text = "https://litter.catbox.moe/abc123.wav\n"
     mock_resp.raise_for_status = MagicMock()
 
     with patch("voice_changer.resemble_pipeline.requests.post", return_value=mock_resp) as mock_post:
         url = _upload_temp_wav(fake_wav)
 
-    assert url == "https://0x0.st/abc123.wav"
+    assert url == "https://litter.catbox.moe/abc123.wav"
     mock_post.assert_called_once()
     call_kwargs = mock_post.call_args
     assert "files" in call_kwargs.kwargs
 
 
-def test_upload_temp_wav_converts_http_to_https():
-    """Test that http:// URLs are converted to https://."""
+def test_upload_temp_wav_returns_https():
+    """Test that returned URLs are HTTPS."""
     mock_resp = MagicMock()
-    mock_resp.text = "http://0x0.st/abc.wav\n"
+    mock_resp.text = "https://litter.catbox.moe/abc.wav\n"
     mock_resp.raise_for_status = MagicMock()
 
     with patch("voice_changer.resemble_pipeline.requests.post", return_value=mock_resp):

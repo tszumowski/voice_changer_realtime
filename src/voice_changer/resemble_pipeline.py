@@ -26,21 +26,19 @@ from voice_changer.vad import VoiceActivityDetector
 logger = logging.getLogger(__name__)
 
 RESEMBLE_SYNTHESIZE_URL = "https://f.cluster.resemble.ai/synthesize"
-TEMP_UPLOAD_URL = "https://0x0.st"
+TEMP_UPLOAD_URL = "https://litterbox.catbox.moe/resources/internals/api.php"
 
 
 def _upload_temp_wav(wav_bytes: bytes) -> str:
-    """Upload WAV to temporary file host, return HTTPS URL."""
+    """Upload WAV to temporary file host (litterbox.catbox.moe), return HTTPS URL."""
     resp = requests.post(
         TEMP_UPLOAD_URL,
-        files={"file": ("segment.wav", wav_bytes, "audio/wav")},
-        timeout=10,
+        data={"reqtype": "fileupload", "time": "1h"},
+        files={"fileToUpload": ("segment.wav", wav_bytes, "audio/wav")},
+        timeout=15,
     )
     resp.raise_for_status()
     url = resp.text.strip()
-    # Ensure HTTPS
-    if url.startswith("http://"):
-        url = url.replace("http://", "https://", 1)
     logger.debug("Uploaded WAV to: %s", url)
     return url
 
@@ -50,7 +48,6 @@ def _resemble_convert(
     wav_url: str,
     voice_uuid: str,
     sample_rate: int = 16000,
-    model: str = "chatterbox-turbo",
 ) -> bytes:
     """Call Resemble STS API and return PCM audio bytes."""
     ssml = f'<speak><resemble:convert src="{wav_url}"></resemble:convert></speak>'
@@ -61,7 +58,6 @@ def _resemble_convert(
         "sample_rate": sample_rate,
         "output_format": "wav",
         "precision": "PCM_16",
-        "model": model,
     }
 
     headers = {
@@ -98,6 +94,7 @@ def _resemble_convert(
         pcm_data = wf.readframes(wf.getnframes())
 
     return pcm_data
+
 
 
 def list_resemble_voices(api_key: str) -> list[dict]:
@@ -258,6 +255,12 @@ class ResemblePipeline:
 
     def _transform_and_play(self, segment: bytes):
         """Transform via Resemble and push to playback."""
+        # Skip segments shorter than 0.5s — too short for reliable STS
+        min_bytes = int(self.settings.sample_rate * 0.5 * 2)  # 0.5s at 16-bit
+        if len(segment) < min_bytes:
+            logger.debug("Skipping short segment (%d bytes < %d)", len(segment), min_bytes)
+            return
+
         try:
             # Wrap as WAV
             wav_data = _wrap_pcm_as_wav(segment, sample_rate=self.settings.sample_rate)
@@ -265,16 +268,25 @@ class ResemblePipeline:
             # Upload to temp host
             url = _upload_temp_wav(wav_data)
 
-            # Call Resemble API
-            pcm_output = _resemble_convert(
-                api_key=self.api_key,
-                wav_url=url,
-                voice_uuid=self.voice_uuid,
-                sample_rate=self.settings.sample_rate,
-            )
-
-            self._output_queue.put(pcm_output)
-            self._segments_processed += 1
+            # Call Resemble API with retry on transient 500 errors
+            last_err = None
+            for attempt in range(2):
+                try:
+                    pcm_output = _resemble_convert(
+                        api_key=self.api_key,
+                        wav_url=url,
+                        voice_uuid=self.voice_uuid,
+                        sample_rate=self.settings.sample_rate,
+                    )
+                    self._output_queue.put(pcm_output)
+                    self._segments_processed += 1
+                    return
+                except RuntimeError as e:
+                    last_err = e
+                    if "500" in str(e) and attempt == 0:
+                        logger.debug("Retrying after 500 error...")
+                        continue
+                    raise
 
         except Exception as e:
             logger.error("Resemble transform error: %s", e)
