@@ -99,7 +99,12 @@ class FastPipeline:
             self.stop()
 
     async def _stt_loop(self):
-        """Async loop: capture mic frames → send to STT WebSocket → text queue."""
+        """Async loop: capture mic frames → send to STT WebSocket → text queue.
+
+        IMPORTANT: Must not block the asyncio event loop, otherwise the
+        WebSocket receive task can't process incoming transcript messages.
+        Uses asyncio.to_thread for the blocking queue.get() call.
+        """
         async_client = AsyncElevenLabs(api_key=self.settings.api_key)
 
         try:
@@ -134,12 +139,19 @@ class FastPipeline:
 
         ptt_was_active = False
 
+        def _get_frame():
+            """Blocking call — run in thread to avoid starving event loop."""
+            try:
+                return self._capture_queue.get(timeout=0.05)
+            except queue.Empty:
+                return None
+
         try:
             while not self._stop_event.is_set():
-                try:
-                    frame = self._capture_queue.get(timeout=0.1)
-                except queue.Empty:
-                    # Check PTT release
+                # Non-blocking: run the blocking queue.get in a thread
+                frame = await asyncio.to_thread(_get_frame)
+
+                if frame is None:
                     if self.ptt and ptt_was_active and not self.ptt.is_active:
                         ptt_was_active = False
                     continue
@@ -172,7 +184,12 @@ class FastPipeline:
             logger.info("STT WebSocket closed")
 
     def _tts_loop(self):
-        """Sync loop: read text from queue → TTS WebSocket → audio to output queue."""
+        """Sync loop: read text → HTTP streaming TTS → audio to output queue.
+
+        Uses HTTP streaming (convert) instead of WebSocket for each transcript.
+        HTTP connection pooling in httpx reuses the TCP+TLS connection,
+        so subsequent calls only pay ~50-100ms overhead, not full setup.
+        """
         logger.info("TTS thread started")
 
         while not self._stop_event.is_set():
@@ -188,14 +205,13 @@ class FastPipeline:
             first_chunk = True
 
             try:
-                # Use sync TTS WebSocket
-                from elevenlabs import VoiceSettings
-                audio_iter = self._sync_client.text_to_speech.convert_realtime(
+                # Use HTTP streaming TTS (benefits from connection reuse)
+                audio_iter = self._sync_client.text_to_speech.convert(
                     voice_id=self.voice_id,
-                    text=iter([text]),
+                    text=text,
                     model_id="eleven_flash_v2_5",
                     output_format="pcm_16000",
-                    voice_settings=VoiceSettings(stability=0.5, similarity_boost=0.75),
+                    optimize_streaming_latency=4,
                 )
 
                 for chunk in audio_iter:

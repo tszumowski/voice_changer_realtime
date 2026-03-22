@@ -168,6 +168,9 @@ def main():
 
         elif mode == "resemble":
             from voice_changer.resemble_pipeline import ResemblePipeline
+            # Use longer segments for Resemble (sync API, not streaming)
+            if args.segment_duration == 1.0:  # default wasn't overridden
+                base_kwargs["segment_duration_s"] = 3.0
             settings = load_settings(
                 resemble_voice_uuid=args.voice_id,
                 **base_kwargs,
